@@ -5,8 +5,8 @@
 #AutoIt3Wrapper_Outfile=WinCDP.exe
 #AutoIt3Wrapper_Compression=3
 #AutoIt3Wrapper_Res_Description=Cisco Discovery Protocol Analyser
-#AutoIt3Wrapper_Res_Fileversion=0.0.1.3
-#AutoIt3Wrapper_Res_LegalCopyright=Chris Hall 2010-2012
+#AutoIt3Wrapper_Res_Fileversion=0.0.1.3a
+#AutoIt3Wrapper_Res_LegalCopyright=Chris Hall 2010-2012 - Hacked by HFuller 2013
 #AutoIt3Wrapper_Res_requestedExecutionLevel=requireAdministrator
 #AutoIt3Wrapper_Res_Field=ProductName|WinCDP
 #AutoIt3Wrapper_Res_Field=ProductVersion|1.3
@@ -25,7 +25,7 @@ $VER = "1.3"
 #Include <String.au3>
 #include <GuiButton.au3>
 #include <ComboConstants.au3>
-$WinCDPVer = "WinCDP - v"& $VER &" - Chris Hall - 2010-" & @YEAR
+$WinCDPVer = "WinCDP - v"& $VER &" - Chris Hall - 2010-" & @YEAR & " (Hacked by HFuller 2013)"
 
 if IsAdmin() = 0 then
 	MsgBox(16,"Exiting","This program requires Local Admistrator rights")
@@ -43,6 +43,9 @@ $Output=""
 $Nic_Friend =""
 $Hardware=""
 $IData=""
+$Default=""
+$OldVLAN=""
+$Exit=0
 SplashTextOn("Please Wait","Enumerating Network Cards via WMI...", 300, 50)
 $objWMIService = ObjGet("winmgmts:\\" & $strComputer & "\root\CIMV2")
 $colItems = $objWMIService.ExecQuery("SELECT * FROM Win32_NetworkAdapter", "WQL", $wbemFlagReturnImmediately + $wbemFlagForwardOnly)
@@ -51,7 +54,13 @@ If IsObj($colItems) then
 			FileWriteLine($log, "[" & $objItem.NetConnectionID & "]")
 			FileWriteLine($log, "ProductName=" & $objItem.ProductName)
 			$value = $objItem.NetConnectionID
-			If StringLen($value) > 1 Then $Output = $Output & $value & "|"
+			If StringLen($value) > 1 Then 
+			   ;if this is the first card, make it Default
+			   If StringLen($Output) == 0 Then
+				  $Default = $value
+			   EndIf
+			   $Output = $Output & $value & "|"
+			EndIf
 			$colItems2 = $objWMIService.ExecQuery("SELECT * FROM Win32_NetworkAdapterConfiguration", "WQL", $wbemFlagReturnImmediately + $wbemFlagForwardOnly)
 			For $objItem2 In $colItems2
 				If $objItem.Index = $objItem2.Index Then
@@ -67,11 +76,11 @@ GUICreate("Cisco Discovery for Windows", 550, 400, (@DesktopWidth - 550) / 2, (@
 GUICtrlCreateGroup("Selection ", 15, 10, 520, 110)
 GUICtrlCreateLabel("Network Connection:", 30, 35, 100, 20)
 $Nic_Friendly = GUICtrlCreateCombo("",145,33,350,20, $CBS_DROPDOWNLIST)
-GUICtrlSetData(-1, $Output)
+GUICtrlSetData(-1, $Output, $Default)
 GUICtrlCreateLabel("Network Card:", 30, 62, 100, 20)
 $Get = GUICtrlCreateButton("Get CDP Data", 120, 85, 100)
 $Save = GUICtrlCreateButton("Save CDP Data", 260, 85, 100)
-$Cancel = GUICtrlCreateButton("Cancel", 400, 85, 100)
+$Cancel = GUICtrlCreateButton("Quit", 400, 85, 100)
 If RegRead("HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA") > 0 Then
     GUICtrlSetImage($Get, "imageres.dll", -2, 0)
 	 _GUICtrlButton_SetShield($Get)
@@ -85,19 +94,16 @@ GUICtrlCreateLabel("Switch Model:", 280, 190, 70, 20)
 GUICtrlCreateLabel("Port Duplex:", 280, 220, 70, 20)
 GUICtrlCreateLabel("VTP Mgmt Domain:", 280, 250, 95, 20)
 GUICtrlCreateGroup("Status ", 15, 300, 520, 65)
-GUICtrlCreateLabel($WinCDPVer, 350, 375, 200, 20)
+GUICtrlCreateLabel($WinCDPVer, -1, 375);, 200, 20)
 
 GUISetState()
 	While 1
 		Switch GUIGetMsg()
 
 		Case $Nic_Friendly
-			$Nic_Friend = GUICtrlRead ($Nic_Friendly)
-			$IData = IniReadSection(@TempDir & "\CDP.txt", $Nic_Friend)
-			$Hardware = $IData[1][1]
-			GUICtrlCreateLabel($Hardware, 145, 62, 350, 20)
-			ClearResults()
+			UpdateHardware()
 		 Case $Get
+			UpdateHardware()
 			If GUICtrlRead($Nic_Friendly) = "" Then
 			   MsgBox(64,"Invalid Selection", "Please select a network card using the dropdown")
 			   ContinueLoop
@@ -120,7 +126,7 @@ Exit
 		$SaveFile = FileOpen(@TempDir & "\SaveCDP.txt", 2)
 		GUICtrlSetState($Get, $GUI_DISABLE)
 		GUICtrlSetState($Save, $GUI_DISABLE)
-		ClearResults()
+		;ClearResults()
 		FileWriteLine($SaveFile, $Nic_Friend & " (" & $Hardware & ") is connected to:")
 		FileWriteLine($SaveFile, "------------------------------------------------------")
 		$ID = $IData[2][1]
@@ -132,6 +138,7 @@ Exit
 			$msg = GUIGetMsg()
 			If $msg = $Cancel Then
 				ProcessClose("tcpdump.exe")
+				OnExit()
 				ExitLoop
 			EndIf
 			If Ceiling(TimerDiff($iBegin)) = ($Secs * 1000) or Ceiling(TimerDiff($iBegin)) > ($Secs * 1000) Then
@@ -139,13 +146,14 @@ Exit
 				$Secs = $Secs + 1
 			EndIf
 			$TCPDmpPID = ProcessExists($TCPDmpPID)
-		Until $TCPDmpPID = "0" Or TimerDiff($iBegin) > 60000
+		Until $TCPDmpPID = "0" Or TimerDiff($iBegin) > 70000
 		GUICtrlDelete($Status1)
 		GUICtrlCreateLabel("", 240, 337, 100, 20 )
 		GUICtrlCreateLabel("", 210, 317, 200, 20)
 $file = FileOpen(@TempDir & "\CDP_OUT.txt")
 $end = _FileCountLines(@TempDir & "\CDP_OUT.txt")
 If $end > 0 Then
+ClearResults()
 $line = 0
 Do
 	If StringInStr(FileReadLine($file, $line), "Device-ID (0x01)") Then
@@ -162,7 +170,14 @@ Do
 	If StringInStr(FileReadLine($file, $line), "VLAN ID (0x0a)") Then
 		$VLAN = StringSplit(FileReadLine($file, $line), ":")
 		$VLAN = StringStripWS($VLAN[3],8)
-		GUICtrlCreateLabel($VLAN, 140, 220, 120, 20)
+		If ( $OldVLAN <> "" And $OldVLAN <> $VLAN ) Then
+		   GUICtrlCreateLabel($VLAN & " (!!!)", 140, 220, 120, 20)
+		   SoundPlay("doorbell-2.wav")
+		Else
+		   GUICtrlCreateLabel($VLAN, 140, 220, 120, 20)
+		EndIf
+		$OldVLAN = $VLAN
+		
 		FileWriteLine($SaveFile, "VLAN ID:	" & $VLAN)
 	EndIf
 	If StringInStr(FileReadLine($file, $line), "Address (0x02)") Then
@@ -191,7 +206,8 @@ Do
 	EndIf
 
 	$line = $line + 1
-Until $line = $end
+ Until $line = $end
+ 
 Else
 	If ProcessExists("tcpdump.exe") Then ProcessClose("tcpdump.exe")
 	GUICtrlCreateLabel("NO CDP DATA FOUND ... !", 210, 317, 150, 20)
@@ -201,8 +217,12 @@ EndIf
 	FileClose($SaveFile)
 	FileClose($file)
 	FileDelete(@TempDir & "\CDP_OUT.txt")
-	GUICtrlSetState($Get, $GUI_ENABLE)
-	GUICtrlSetState($Save, $GUI_ENABLE)
+	;GUICtrlSetState($Get, $GUI_ENABLE)
+	;GUICtrlSetState($Save, $GUI_ENABLE)
+	
+	Sleep(3000)
+	GetCDP($Nic_Friendly)
+ 	
 	EndFunc
 
 	Func ClearResults()
@@ -231,4 +251,15 @@ EndIf
 		FileDelete(@TempDir & "\CDP.txt")
 		FileDelete(@TempDir & "\tcpdump.exe")
 		FileDelete(@TempDir & "\SaveCDP.txt")
-	EndFunc
+		Exit(0)
+	 EndFunc
+	 
+	 Func UpdateHardware()
+		 $Nic_Friend = GUICtrlRead ($Nic_Friendly)
+		 $IData = IniReadSection(@TempDir & "\CDP.txt", $Nic_Friend)
+		 $Hardware = $IData[1][1]
+		 GUICtrlCreateLabel($Hardware, 145, 62, 350, 20)
+		 ;ClearResults()
+	  EndFunc
+	  
+	  
